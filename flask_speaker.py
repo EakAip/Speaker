@@ -305,10 +305,6 @@ def process_audio_and_save_result(audio_filepath, audioid):
         return df
     
 
-        
-
-
-    
     # 字幕合并：以？。！做结尾，合并后计算字幕长度，大于60不继续合并
     def merge_captions(df):
         # 初始化索引和合并的结果
@@ -381,13 +377,8 @@ def process_audio_and_save_result(audio_filepath, audioid):
     processed_df = merge3(processed_df)
     processed_df = merge_silent_intervals(processed_df)
 
-
-
     processed_df.to_csv(result_filepath, index=False)
     print(f'Processed data has been saved to {result_filepath}')
-
-
-
 
     # 对结果中的句子进行分类
     speaker_info = [f"{item.get('spk', '')}:{item.get('text', '')}" for item in data]
@@ -400,13 +391,11 @@ def process_audio_and_save_result(audio_filepath, audioid):
         for sentence in question_sentences:
             txtfile.write(sentence + '\n')
 
-
     # # 生成SRT内容
     # srt_content = generate_srt(data)
             
      # 生成vtt内容
     vtt_content = generate_vtt(data)
-
 
     # 保存SRT到文件
     vtt_filename = f'{audioid}_caption.vtt'
@@ -423,7 +412,6 @@ def process_audio_and_save_result(audio_filepath, audioid):
     end_time = time.time()
     print(f"generate time:{end_time-start_time}")
 
-    
 
 @app.route('/results/<filename>')
 def serve_result_file(filename):
