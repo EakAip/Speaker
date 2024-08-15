@@ -8,5 +8,12 @@
 pip install -r requirements.txt
 ```
 
-flask_keyword.py 关键字服务接口
-flask_speaker.py 说话人分割服务接口
+### 关键字服务接口
+```python
+nohup python flask_keyword.py & tail -f nohup.out
+```
+
+### 说话人分割服务接口
+```python
+nohup python flask_speaker.py & tail -f nohup.out
+```
