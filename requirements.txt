@@ -15,3 +15,4 @@ aiohttp
 pycparser==2.22
 cffi==1.17.0
 cryptography==43.0.0
+funasr
