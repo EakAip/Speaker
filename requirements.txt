@@ -13,5 +13,5 @@ transformers
 pyarrow==17.0.0
 aiohttp
 pycparser==2.22
-cffi-1.17.0
-cryptography-43.0.0
+cffi==1.17.0
+cryptography==43.0.0
