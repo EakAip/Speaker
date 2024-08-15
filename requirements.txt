@@ -1,1 +1,17 @@
 click==8.1.7
+itsdangerous==2.2.0
+pytz==2024.1
+python-dateutil==2.9.0.post0
+tqdm==4.66.5
+lazy_loader==0.4
+pydub==0.25.1
+importlib_metadata==8.2.0
+platformdirs==4.2.2
+sortedcontainers==2.4.0
+regex==2024.7.24
+transformers
+pyarrow==17.0.0
+aiohttp
+pycparser==2.22
+cffi-1.17.0
+cryptography-43.0.0
