@@ -1,10 +1,10 @@
 # speaker
+
 工作项目——课堂质量诊断
 
-### 结果：
+### 运行：
 
 ```python
-
 pip install -r requirements.txt
 ```
 
