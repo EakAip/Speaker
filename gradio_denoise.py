@@ -1,3 +1,4 @@
+# 端口：7999
 # 自动切分，可以加载长音频
 import gradio as gr
 import torch
