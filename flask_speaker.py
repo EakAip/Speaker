@@ -48,11 +48,14 @@ app = Flask(__name__)
 # 上传的文件和结果文件保存在这个目录下
 UPLOAD_FOLDER = './uploads'
 RESULT_FOLDER = './results'
+TEMP_AUDIO_FOLDER = './temp_audio_chunks'
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 if not os.path.exists(RESULT_FOLDER):
     os.makedirs(RESULT_FOLDER)
-
+if not os.path.exists(TEMP_AUDIO_FOLDER):
+    os.makedirs(TEMP_AUDIO_FOLDER)
+    
 # 跟踪音频处理状态的字典
 audio_processing_status = {}
 
