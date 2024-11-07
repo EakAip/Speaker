@@ -1,0 +1,105 @@
+{
+	"info": {
+		"_postman_id": "4dc36123-6576-4d70-a96e-c486d35befe4",
+		"name": "课堂诊断接口",
+		"schema": "https://schema.getpostman.com/json/collection/v2.0.0/collection.json",
+		"_exporter_id": "32237079"
+	},
+	"item": [
+		{
+			"name": "说话人分割",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "formdata",
+					"formdata": [
+						{
+							"key": "audioid",
+							"value": "001",
+							"type": "text"
+						},
+						{
+							"key": "audiofile",
+							"type": "file",
+							"src": "/C:/Users/WangRuihua/Desktop/课堂诊断/audio.wav"
+						},
+						{
+							"key": "audiotype",
+							"value": "",
+							"type": "text"
+						},
+						{
+							"key": "audiodenoise",
+							"value": "",
+							"type": "text"
+						}
+					]
+				},
+				"url": "http://188.18.18.106:8006/speaker"
+			},
+			"response": []
+		},
+		{
+			"name": "说话分分割生成状态",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "formdata",
+					"formdata": [
+						{
+							"key": "audioid",
+							"value": "001",
+							"type": "text"
+						}
+					]
+				},
+				"url": "http://188.18.18.106:8006/genstate"
+			},
+			"response": []
+		},
+		{
+			"name": "关键字词频统计",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n    \"text\": \"我收了一下同学们交的报告啊。 可能有些同学是不是发的那个,没收到有三个同学现在。 二十五个同学交了,现在是何其多,是不是没交? 还有张哲信,你也收交了是吧?还有张哲千,就你们三个。 我的邮箱包括那个垃圾邮箱都没收到。 你们直接在客户上面,等会下课了发给我。 我们先把第一,这个第九章的最后几个部分我们先讲完。 讲完以后有时间我说一下大家这个调研报告的一些一般的问题。 所以后面我们在特别的这个今天这个课上完了以后,下次课可能大家把笔记本电脑带来。 把你们的那个文本带来,可能一个一个的同学的问题,因为有一些是共性的问题, 还有一些是个性的问题,有些同学的那个内容比较丰富,有些同学做的太简单了, 那真的就是剪刀架降服啊,这个都没有过老似的。 \"\r\n}\r\n",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": "http://188.18.18.106:8003/keywords"
+			},
+			"response": []
+		},
+		{
+			"name": "说话人分割-负载均衡",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "formdata",
+					"formdata": [
+						{
+							"key": "audioid",
+							"value": "002",
+							"type": "text"
+						},
+						{
+							"key": "audiofile",
+							"type": "file",
+							"src": "/C:/Users/WangRuihua/Desktop/课堂诊断/audio.wav"
+						}
+					]
+				},
+				"url": "http://127.0.0.1:8800/speaker"
+			},
+			"response": []
+		}
+	]
+}
