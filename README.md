@@ -28,3 +28,8 @@ nohup python flask_keywords.py & tail -f nohup.out
 ```python
 nohup python flask_speaker.py & tail -f nohup.out
 ```
+
+### 语音转写web界面（常态化运行用于支持其他业务）
+```python
+nohup python gradio_asr.py & tail -f nohup.out
+```
