@@ -20,7 +20,7 @@ pip install -r requirements.txt
 ### 关键字服务接口
 
 ```python
-nohup python flask_keyword.py & tail -f nohup.out
+nohup python flask_keywords.py & tail -f nohup.out
 ```
 
 ### 说话人分割服务接口
