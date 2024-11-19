@@ -1,6 +1,5 @@
 # 接口的降噪模块，千万不能删
 
-# 这里需要改为相对路径
 
 import torch
 import tempfile
@@ -8,14 +7,23 @@ import numpy as np
 from loguru import logger
 from torch import Tensor
 import gc  # 导入垃圾回收模块
+import os
 
 from df import config
 from df.enhance import enhance, init_df, load_audio, save_audio
 from df.io import resample
 
+# 获取当前脚本的目录
+current_dir = os.path.dirname(os.path.abspath(__file__))
+
+# 模型改为绝对路径
+model_base_dir = os.path.join(current_dir,"DeepFilterNet2")
+
 # 初始化模型和设备
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model, df, _ = init_df("./DeepFilterNet2", config_allow_defaults=True)
+# model, df, _ = init_df("./DeepFilterNet2", config_allow_defaults=True)  # 相对路径初始化方法
+model, df, _ = init_df(model_base_dir,config_allow_defaults=True)     # 绝对路径初始化方法
+
 model = model.to(device=device).eval()
 
 def denoise_audio(input_audio_path: str, output_audio_path: str = None) -> str:
