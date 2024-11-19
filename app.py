@@ -1,5 +1,7 @@
 # 接口的降噪模块，千万不能删
 
+# 这里需要改为相对路径
+
 import torch
 import tempfile
 import numpy as np
