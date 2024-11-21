@@ -1,10 +1,14 @@
 # 接口：8006
 
+# 语音转写，说话人分割
+
+# 环境：jyd/speaker
+
 # paraformer + cam++
 
-# 需要前期将音频转换为左声道（目前效果最好）
+# 自动切分左右声道（目前效果最好）
 # 带定量清理文件，删除最早的文件（防止内存占满）
-# 分离左声道
+# 分离左右声道，左声道无效自动处理右声道
 
 # 处理静默时间 小于2s的归到上一条字幕
 # 长时间静默后出现声音，整段时间都会标记到字幕行（瑞华）
@@ -18,11 +22,14 @@
 # 带降噪 DeepFilterNet2降噪（切分音频）
 # 带显存清理 删除不再使用的对象，减少代码冗余
 
+# 程序保活重启机制 需要修改为绝对路径
+
 
 
 from flask import Flask, request, jsonify, url_for,send_from_directory
 import os
 import re
+import gc
 import csv
 import time
 import json
@@ -35,7 +42,6 @@ import tempfile
 import numpy as np
 from pydub import AudioSegment
 from loguru import logger
-import gc  # 导入垃圾回收模块
 from modelscope.pipelines import pipeline
 from modelscope.utils.constant import Tasks
 from datetime import datetime,timedelta
@@ -45,7 +51,7 @@ from xunfeiapi import RequestApi
 
 app = Flask(__name__)
 
-# 上传的文件和结果文件保存在这个目录下
+# 创建上传目录、结果目录和缓存目录
 UPLOAD_FOLDER = './uploads'
 RESULT_FOLDER = './results'
 TEMP_AUDIO_FOLDER = './temp_audio_chunks'
@@ -60,44 +66,24 @@ if not os.path.exists(TEMP_AUDIO_FOLDER):
 audio_processing_status = {}
 
 
-# DF降噪处理函数
-def mp3_to_wav(mp3_filename, frame_rate):
-    """将MP3文件转换为WAV格式"""
-    return AudioSegment.from_file(file=mp3_filename).set_frame_rate(frame_rate)
-
-def split_audio(audio_segment, chunk_length_ms):
-    """将音频段切割为指定长度的片段"""
-    return [audio_segment[i:i+chunk_length_ms] for i in range(0, len(audio_segment), chunk_length_ms)]
-
-def merge_audio(segments):
-    """合并多个音频段"""
-    combined = AudioSegment.empty()
-    for segment in segments:
-        combined += segment
-    return combined
-
-# 降噪——————DF切分降噪/未启用
+# 降噪——————DF切分降噪
 def process_audio_chunks(input_mp3_path, temp_folder, output_audio_path, audioid, frame_rate=44100):
     print("开始降噪：")
-    # 确保临时文件夹存在
-    os.makedirs(temp_folder, exist_ok=True)
     
-    # 将MP3转换为WAV
-    audio_segment = mp3_to_wav(input_mp3_path, frame_rate)
+    os.makedirs(temp_folder, exist_ok=True)     # 确保临时文件夹存在
+    audio_segment = AudioSegment.from_file(file=input_mp3_path).set_frame_rate(frame_rate)  # 将MP3文件转换为WAV格式
     
-    # 将音频切割为10分钟的片段 (600000ms)
-    chunks = split_audio(audio_segment, 600000)
+    chunk_length_ms = 600000
+    chunks = [audio_segment[i:i+chunk_length_ms] for i in range(0, len(audio_segment), chunk_length_ms)]  # 将音频切割为10分钟的片段 (600000ms)
 
-    # 添加清空降噪文件夹内旧文件？？？ 防止干扰新文件
-    
     processed_segments = []
     for i, chunk in enumerate(chunks):
-        # 为每个片段生成临时文件路径
-        chunk_path = os.path.join(temp_folder, f"{audioid}_chunk_{i}.wav")
+        
+        chunk_path = os.path.join(temp_folder, f"{audioid}_chunk_{i}.wav")      # 为每个片段生成临时文件路径
         chunk.export(chunk_path, format="wav")
         
-        # 对片段进行降噪处理
-        print("***************开始降噪*************")
+        # 对切分出的片段进行降噪处理
+        print(f"***************开始降噪第{i+1}段*************")
         denoised_chunk_path = os.path.join(temp_folder, f"{audioid}_denoised_{i}.wav")
         denoise_audio(chunk_path, denoised_chunk_path)
         
@@ -106,22 +92,22 @@ def process_audio_chunks(input_mp3_path, temp_folder, output_audio_path, audioid
         
         # 清理原始片段文件
         os.remove(chunk_path)
-        
     
-    # 合并处理后的音频片段
-    final_segment = merge_audio(processed_segments)
-    # 保存合并后的音频片段
-    final_segment.export(output_audio_path, format="wav")
+    final_segment =  AudioSegment.empty()     # 合并处理后的音频片段
+    for segment in processed_segments:
+        final_segment += segment
+        
+    final_segment.export(output_audio_path, format="wav")   # 保存合并后的音频片段
 
     # 已保存合并后的音频，删除降噪音频片段
     for i in range(len(processed_segments)):
         denoised_chunk_path = os.path.join(temp_folder, f"{audioid}_denoised_{i}.wav")
         os.remove(denoised_chunk_path)
         
-    
     print(f"处理完成，输出文件在：{output_audio_path}")
+    
 
-def manage_files(directory, max_files=9):
+def manage_files(directory, max_files=20):
     """管理文件夹中的文件数量，保持文件数量不超过 max_files，如果超过就删除最旧的文件"""
     files = os.listdir(directory)
     if len(files) > max_files:
@@ -143,24 +129,18 @@ def save_and_manage_file(file, path):
     manage_files(RESULT_FOLDER)
 
 def convert_audio_to_left_channel(input_file, output_dir):
-
-    # 确保输出目录存在
-    os.makedirs(output_dir, exist_ok=True)
-
-    # 加载音频文件
-    audio = AudioSegment.from_file(input_file)
-
-    # 将音频采样率转换为16000Hz
-    audio = audio.set_frame_rate(16000)
+    
+    os.makedirs(output_dir, exist_ok=True)   # 确保输出目录存在
+    audio = AudioSegment.from_file(input_file)  # 加载音频文件
+    audio = audio.set_frame_rate(16000) # 将音频采样率转换为16000Hz
     print("音频采样率降为16000hz")
 
     # 检查音频是否是立体声
     if audio.channels == 2:
         left_channel = audio.split_to_mono()[0]
         right_channel = audio.split_to_mono()[1]
-        # 获取文件名
-        filename, file_extension = os.path.splitext(os.path.basename(input_file))
-
+        
+        filename, file_extension = os.path.splitext(os.path.basename(input_file))   # 获取文件名
         # 保存左右声道音频文件
         left_channel_path = os.path.join(output_dir, f"{filename}_left{file_extension}")
         right_channel_path = os.path.join(output_dir, f"{filename}_right{file_extension}")
@@ -173,49 +153,22 @@ def convert_audio_to_left_channel(input_file, output_dir):
     else:
         print("原音频是单声道，直接使用原文件。")
         return input_file,None
-    
-def time_convert(ms):
-    """将毫秒转换为SRT字幕格式的时间字符串"""
-    hours = ms // 3600000
-    minutes = (ms % 3600000) // 60000
-    seconds = (ms % 60000) // 1000
-    milliseconds = ms % 1000
-    return f"{hours:02}:{minutes:02}:{seconds:02},{milliseconds:03}"
-
-def generate_srt(data):
-    srt_content = ""
-    for index, item in enumerate(data):
-        start_time = time_convert(int(item['timestamp'][0][0] ))  # 转换为毫秒
-        end_time = time_convert(int(item['end'] ))  # 转换为毫秒
-        speaker = f"speaker{item['spk']}"
-        text = item['text']
-        srt_content += f"{index + 1}\n{start_time} --> {end_time}\n{speaker}: {text}\n\n"
-    return srt_content
-
-def time_convert_vtt(ms):
-    """将毫秒转换为WebVTT字幕格式的时间字符串"""
-    hours = ms // 3600000
-    minutes = (ms % 3600000) // 60000
-    seconds = (ms % 60000) // 1000
-    milliseconds = ms % 1000
-    return f"{hours:02}:{minutes:02}:{seconds:02}.{milliseconds:03}"
-
-def generate_vtt(data):
-    vtt_content = "WEBVTT\n\n"
-    for index, item in enumerate(data):
-        start_time = time_convert_vtt(int(item['timestamp'][0][0]))  # 转换为毫秒
-        end_time = time_convert_vtt(int(item['end']))  # 转换为毫秒
-        speaker = f"speaker{item['spk']}"
-        text = item['text']
-        vtt_content += f"{start_time} --> {end_time}\n{speaker}: {text}\n\n"
-    return vtt_content
 
 def classify_sentences(speaker_info):
     print("\n**************************句子分类**************************\n")
-    with open('./configs/question_words.txt', 'r', encoding='utf-8') as file:
+    
+    
+    # 获取当前脚本的目录
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    question_words_path = os.path.join(current_dir, 'configs/question_words.txt')
+    noquestion_words_path = os.path.join(current_dir, 'configs/noquestion_words.txt')
+    
+    
+    # 打开文件
+    with open(question_words_path, 'r', encoding='utf-8') as file:
         question_words = [word.strip() for word in file.readlines()]
     
-    with open('./configs/noquestion_words.txt', 'r', encoding='utf-8') as file:
+    with open(noquestion_words_path, 'r', encoding='utf-8') as file:
         noquestion_words = [word.strip() for word in file.readlines()]
 
     def is_question(sentence):
@@ -235,17 +188,16 @@ def classify_sentences(speaker_info):
     print("\n************************课堂诊断结束************************\n")
     return question_sentences
 
-
 def initialize_model():
     """初始化模型并返回实例。"""
     model = AutoModel(
-        model="damo/speech_seaco_paraformer_large_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
+        model="/opt/jyd01/wangruihua/mymodel/modelscope/hub/damo/speech_seaco_paraformer_large_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
         model_revision="v2.0.4",
-        vad_model="damo/speech_fsmn_vad_zh-cn-16k-common-pytorch",
+        vad_model="/opt/jyd01/wangruihua/mymodel/modelscope/hub/damo/speech_fsmn_vad_zh-cn-16k-common-pytorch",
         vad_model_revision="v2.0.4",
-        punc_model="damo/punc_ct-transformer_zh-cn-common-vocab272727-pytorch",
+        punc_model="/opt/jyd01/wangruihua/mymodel/modelscope/hub/damo/punc_ct-transformer_zh-cn-common-vocab272727-pytorch",
         punc_model_revision="v2.0.4",
-        spk_model="damo/speech_campplus_sv_zh-cn_16k-common",
+        spk_model="/opt/jyd01/wangruihua/mymodel/modelscope/hub/damo/speech_campplus_sv_zh-cn_16k-common",
         spk_model_revision="v2.0.2"
     )
     return model
@@ -289,17 +241,20 @@ def process_audio_and_save_result(audio_filepath, audioid, audiodenoise):
         
         res = model.generate(input = output_audio_path, batch_size_s=300, hotword = '基因')
         
-        clear_cuda_cache()
-        
-        if os.path.exists(left_channel_path):
-            os.remove(left_channel_path)
-        left_processed = True
-        
-        del model,left_channel_path,output_audio_path
+        # 检查res列表是否为空,如果为空则开始处理右声道
+        if not res or "sentence_info" not in res[0]:
+            print("没有从左声道音频文件中识别出任何内容")
+        else:
+            clear_cuda_cache()
+            if os.path.exists(left_channel_path):
+                os.remove(left_channel_path)
+            left_processed = True
+            
+            del model,left_channel_path,output_audio_path
         
     except Exception as e:
         if "CUDA out of memory" in str(e):
-            audio_processing_status[audioid] = 'nocuda'  # 更新状态为失败
+            audio_processing_status[audioid] = 'nocuda'     # 更新状态为nocuda
             print(f"处理错误可能是显存不足，异常信息为：{e}")
         else:
             print(f"处理左声道音频失败，异常信息为：{e}")
@@ -309,7 +264,7 @@ def process_audio_and_save_result(audio_filepath, audioid, audiodenoise):
     finally:
         clear_cuda_cache()
         
-    if not left_processed:
+    if not left_processed:      # 左声道不行得话，处理右声道
         try:
             # 切分音频降噪处理
             if audiodenoise == "1":
@@ -528,15 +483,30 @@ def process_audio_and_save_result(audio_filepath, audioid, audiodenoise):
         for sentence in question_sentences:
             txtfile.write(sentence + '\n')
 
+    def time_convert_vtt(ms):
+        """将毫秒转换为WebVTT字幕格式的时间字符串"""
+        hours = ms // 3600000
+        minutes = (ms % 3600000) // 60000
+        seconds = (ms % 60000) // 1000
+        milliseconds = ms % 1000
+        return f"{hours:02}:{minutes:02}:{seconds:02}.{milliseconds:03}"
 
-    # # 生成SRT内容
-    # srt_content = generate_srt(data)
+    def generate_vtt(data):
+        vtt_content = "WEBVTT\n\n"
+        for index, item in enumerate(data):
+            start_time = time_convert_vtt(int(item['timestamp'][0][0]))  # 转换为毫秒
+            end_time = time_convert_vtt(int(item['end']))  # 转换为毫秒
+            speaker = f"speaker{item['spk']}"
+            text = item['text']
+            vtt_content += f"{start_time} --> {end_time}\n{speaker}: {text}\n\n"
+        return vtt_content
+
             
     # 生成vtt内容
     vtt_content = generate_vtt(data)
 
 
-    # 保存SRT到文件
+    # 保存vtt到文件
     vtt_filename = f'{audioid}_caption.vtt'
     vtt_filepath = os.path.join(RESULT_FOLDER, vtt_filename)
     with open(vtt_filepath, 'w', encoding='utf-8') as vttfile:
@@ -757,7 +727,6 @@ def process_audio_and_save_result_xunfei(audio_filepath, audioid):
 
 
     print(f'Processed data has been saved to {result_filepath}')
-
 
 
 
