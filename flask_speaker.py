@@ -24,6 +24,9 @@
 
 # 程序保活重启机制 需要修改为绝对路径
 
+# 平均 dBFS (-14.92) 表示文件有较多静音或低音量区域。VAD (Voice Activity Detection)模型配置不适合处理这种音频。
+
+# 优化高并发队列问题
 
 
 from flask import Flask, request, jsonify, url_for,send_from_directory
@@ -48,13 +51,15 @@ from datetime import datetime,timedelta
 from pydub import AudioSegment
 from app import denoise_audio  # 从app.py导入降噪模块 / 一般不加降噪，降噪会丢失声音细节
 from xunfeiapi import RequestApi
+from queue import Queue
 
 app = Flask(__name__)
 
 # 创建上传目录、结果目录和缓存目录
-UPLOAD_FOLDER = './uploads'
-RESULT_FOLDER = './results'
-TEMP_AUDIO_FOLDER = './temp_audio_chunks'
+UPLOAD_FOLDER = os.path.abspath('./uploads')
+RESULT_FOLDER = os.path.abspath('./results')
+TEMP_AUDIO_FOLDER = os.path.abspath('./temp_audio_chunks')
+
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 if not os.path.exists(RESULT_FOLDER):
@@ -62,8 +67,13 @@ if not os.path.exists(RESULT_FOLDER):
 if not os.path.exists(TEMP_AUDIO_FOLDER):
     os.makedirs(TEMP_AUDIO_FOLDER)
     
+
+# 创建队列用于管理音频处理
+audio_processing_queue = Queue()
+
 # 跟踪音频处理状态的字典
 audio_processing_status = {}
+
 
 
 # 降噪——————DF切分降噪
@@ -107,7 +117,7 @@ def process_audio_chunks(input_mp3_path, temp_folder, output_audio_path, audioid
     print(f"处理完成，输出文件在：{output_audio_path}")
     
 
-def manage_files(directory, max_files=20):
+def manage_files(directory, max_files=50):
     """管理文件夹中的文件数量，保持文件数量不超过 max_files，如果超过就删除最旧的文件"""
     files = os.listdir(directory)
     if len(files) > max_files:
@@ -190,6 +200,8 @@ def classify_sentences(speaker_info):
 
 def initialize_model():
     """初始化模型并返回实例。"""
+    
+    
     model = AutoModel(
         model="damo/speech_seaco_paraformer_large_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
         model_revision="v2.0.4",
@@ -200,6 +212,8 @@ def initialize_model():
         spk_model="damo/speech_campplus_sv_zh-cn_16k-common",
         spk_model_revision="v2.0.2"
     )
+    
+    
     return model
 
 def clear_cuda_cache():
@@ -240,6 +254,7 @@ def process_audio_and_save_result(audio_filepath, audioid, audiodenoise):
         model = initialize_model()
         
         res = model.generate(input = output_audio_path, batch_size_s=300, hotword = '基因')
+        
         
         # 检查res列表是否为空,如果为空则开始处理右声道
         if not res or "sentence_info" not in res[0]:
@@ -734,9 +749,24 @@ def process_audio_and_save_result_xunfei(audio_filepath, audioid):
     audio_processing_status[audioid] = 'completed'
     end_time = time.time()
     print(f"generate time:{end_time-start_time}")
-    
 
-@app.route('/results/<filename>')
+
+def audio_processing_worker():
+    while True:
+        # 获取队列中的音频文件
+        audioid, audio_filepath, audiodenoise = audio_processing_queue.get()
+        if audioid is None:
+            break  # 如果是终止信号，则退出线程
+        process_audio_and_save_result(audio_filepath, audioid, audiodenoise)
+        audio_processing_queue.task_done()  # 标记任务完成
+
+# 启动工作线程，最多可同时处理1个音频
+worker_thread = threading.Thread(target=audio_processing_worker, daemon=True)
+worker_thread.start()
+
+
+
+@app.route('/results/<filename>')       #提供一个 Flask 路由，用于返回存储在 RESULT_FOLDER 目录下的文件。当用户请求该路由时，Flask 会尝试从指定的结果文件夹中发送对应的文件。
 def serve_result_file(filename):
     return send_from_directory(RESULT_FOLDER, filename)
 
@@ -754,6 +784,7 @@ def upload_and_process_file():
     audioid = request.form.get('audioid')
     audiotype = request.form.get('audiotype')
     audiodenoise = request.form.get('audiodenoise')
+    
     if not audioid:
         return jsonify({"code": 5, "msg": "No audio ID provided"}), 200
     
@@ -770,18 +801,18 @@ def upload_and_process_file():
     if audiotype == "1":
         # 在后台线程中开始处理，以避免阻塞响应
         thread = threading.Thread(target=process_audio_and_save_result_xunfei, args=(audio_filepath, audioid))
+        thread.start()
     else:
-        # 在后台线程中开始处理，以避免阻塞响应
-        thread = threading.Thread(target=process_audio_and_save_result, args=(audio_filepath, audioid, audiodenoise))
-    thread.start()
-
+       # 将音频文件加入队列进行处理
+        audio_processing_queue.put((audioid, audio_filepath, audiodenoise))
+    
     return jsonify({"code": 0, "msg": "Start processing", "data": {"audioid": audioid}})
 
 @app.route('/genstate', methods=['POST'])
 def check_generation_status():
     audioid = request.form.get('audioid')
     if not audioid or audioid not in audio_processing_status:
-        return jsonify({"code": 5, "msg": "空ID或者不知名ID"}), 200
+        return jsonify({"code": 5, "msg": "Empty ID or unknown ID"}), 200
 
     if audio_processing_status[audioid] == 'completed':
         # 使用url_for生成结果文件的URL
@@ -803,10 +834,10 @@ def check_generation_status():
                 })
     elif audio_processing_status[audioid] == 'failed':
         # 如果处理失败，返回失败的状态
-        return jsonify({"code": 5, "msg": "音频文件可能缺少声音", "data": {"audioid": audioid}})
+        return jsonify({"code": 5, "msg": "The audio file may be missing sound", "data": {"audioid": audioid}})
 
     elif audio_processing_status[audioid] == 'nocuda':
-        return jsonify({"code": 5, "msg": "显存不足，请稍后重试", "data": {"audioid": audioid}})
+        return jsonify({"code": 5, "msg": "CUDA is out of memory, please try again later", "data": {"audioid": audioid}})
 
     else:
         return jsonify({"code": 1, 
